@@ -10,7 +10,7 @@ Released code and  pre-trained models for **ICLR 2024** paper **Mind Your Augmen
 
 The work presents a thorough investigation of the impact of coupling shortcuts in dense self-supervised learning. We propose a de-coupling strategy to integrate with the existing dense self-supervised learning methods to mitigate the negative impact of the coupling shortcuts, which consistently improves the performance of dense-level evaluation tasks.
 
-#### Our project is built using the [iBOT](https://github.com/bytedance/ibot) repository.
+#### Acknowledgement: Our project is built using the [iBOT](https://github.com/bytedance/ibot) repository.
 
 
 ## News 

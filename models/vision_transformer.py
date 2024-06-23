@@ -146,12 +146,7 @@ class VisionTransformer(nn.Module):
         num_patches = self.patch_embed.num_patches
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.pos_shuff = False
-        self.pos_shuff_II = False
-        if self.pos_shuff:
-            self.pos_embed = nn.Parameter(torch.zeros(1, num_patches*4 + 1, embed_dim))
-        else:
-            self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
         self.pos_drop = nn.Dropout(p=drop_rate)
 
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
@@ -234,21 +229,14 @@ class VisionTransformer(nn.Module):
 
         return self.pos_drop(x)
 
-    def forward(self, x, return_all_tokens=None, mask=None, ist=False):
+    def forward(self, x, return_all_tokens=None, mask=None):
         # mim
         if self.masked_im_modeling:
             assert mask is not None
             x = self.prepare_tokens(x, mask=mask)
         else:
             x = self.prepare_tokens(x)
-        #B = x.shape[0]
-        # if mix:
-        #     mask_reshape = torch.ones([B//2,197,1]).long().cuda()
-        #     mask_reshape[:,1:] = mask[B//2].reshape([-1,196,1]).flip(0)
         for bid, blk in enumerate(self.blocks):
-            # if bid == 7 and mix:
-            #     mix_mask = torch.rand(B).cuda().topk(k=B//2)[1]
-            #     x[mix_mask] = .7*x[mix_mask]+.3*x[mix_mask]*(1-mask_reshape)+.3*(x[mix_mask].detach().flip(0))*mask_reshape
             x = blk(x)
 
         x = self.norm(x)

@@ -31,5 +31,7 @@ python -m torch.distributed.launch --nproc_per_node=8 \
 --global_crops_scale 0.14 1. \
 --pred_ratio 0 0.4  \
 --pred_ratio_var 0 0.2 \
---dc # dc is the flag for using de-coupling strategy
+--dc_ratio 0.3 \
+--dc_sample_ratio 0.25 \
+--dc
 

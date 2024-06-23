@@ -655,7 +655,7 @@ class MultiCropWrapper(nn.Module):
     concatenate all the output features and run the head forward on these
     concatenated features.
     """
-    def __init__(self, backbone, head=None, use_queue=False):
+    def __init__(self, backbone, head=None):
         super(MultiCropWrapper, self).__init__()
         # disable layers dedicated to ImageNet labels classification
         backbone.fc, backbone.head = nn.Identity(), nn.Identity()
@@ -664,53 +664,8 @@ class MultiCropWrapper(nn.Module):
             self.head = nn.Identity()
         else:
             self.head = head
-        if use_queue:
-            self.queue_K = 8192 * 8
-            self.queueV_K = 8192 * 4
 
-            # create the queue
-            self.register_buffer("queue", torch.randn(128, self.queue_K))
-            self.queue = F.normalize(self.queue, dim=0)
-
-            self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
-
-            self.register_buffer("queueV", torch.randn(128, self.queueV_K))
-            self.queueV = F.normalize(self.queueV, dim=0)
-
-            self.register_buffer("queueV_ptr", torch.zeros(1, dtype=torch.long))
-
-        @torch.no_grad()
-        def _dequeue_and_enqueue(self, keys):
-            # gather keys before updating queue
-            keys = concat_all_gather(keys)
-
-            batch_size = keys.shape[0]
-
-            ptr = int(self.queue_ptr)
-            assert self.queue_K % batch_size == 0  # for simplicity
-
-            # replace the keys at ptr (dequeue and enqueue)
-            self.queue[:, ptr:ptr + batch_size] = keys.T
-            ptr = (ptr + batch_size) % self.queue_K  # move pointer
-            self.queue_ptr[0] = ptr
-
-        @torch.no_grad()
-        def _dequeue_and_enqueue_V(self, keys):
-            # gather keys before updating queue
-            keys = concat_all_gather(keys)
-
-            batch_size = keys.shape[0]
-
-            ptr = int(self.queueV_ptr)
-            assert self.queueV_K % batch_size == 0  # for simplicity
-
-            # replace the keys at ptr (dequeue and enqueue)
-            self.queueV[:, ptr:ptr + batch_size] = keys.T
-            ptr = (ptr + batch_size) % self.queueV_K  # move pointer
-            self.queueV_ptr[0] = ptr
-
-    def forward(self, x, mask=None, return_backbone_feat=False, ist=False,
-                **kwargs):
+    def forward(self, x, mask=None, return_backbone_feat=False, **kwargs):
         # convert to list
         if not isinstance(x, list):
             x = [x]
@@ -727,7 +682,7 @@ class MultiCropWrapper(nn.Module):
                 inp_m = torch.cat(mask[start_idx: end_idx])
                 kwargs.update(dict(mask=inp_m))
 
-            _out = self.backbone(inp_x,ist=ist, **kwargs)
+            _out = self.backbone(inp_x, **kwargs)
             if start_idx == 0:
                 output = _out
             else:

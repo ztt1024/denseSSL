@@ -108,11 +108,11 @@ class ImageFolderMask(ImageFolder):
                 np.random.shuffle(mask)
                 mask = mask.reshape(H, W)
 
-            elif self.pred_shape == 'cutout':
+            elif self.pred_shape == 'rcc':
                 mask = np.ones((H, W), dtype=bool)
                 bboxs = torch.tensor(get_bboxs_in_grid())
                 cut_ratio = self.get_pred_ratio()
-                mask = PRC(mask, bboxs, (W, H), cut_ratio)
+                mask = RCC(mask, bboxs, (W, H), cut_ratio)
                 mask = ~mask
             else:
                 # no implementation
@@ -122,35 +122,13 @@ class ImageFolderMask(ImageFolder):
 
         return output + (masks,)
 
-def get_bboxs_random(scale=(0.09, 0.2), ratio=(0.5, 2), N=8):
-    bboxs_ls = np.zeros([N, 4])
-    scale, ratio = scale, ratio
-    width, height = 1, 1
-    area = height * width
-
-    for bid in range(N):
-        target_area = random.uniform(*scale) * area
-        iter = 0
-        while True:
-            cur_ratio = ratio
-            if iter >= 20:
-                cur_ratio = (min(ratio[0], width/height), max(ratio[1], width/height))
-            iter += 1
-            log_ratio = (math.log(cur_ratio[0]), math.log(cur_ratio[1]))
-            aspect_ratio = math.exp(random.uniform(*log_ratio))
-
-            w = math.sqrt(target_area * aspect_ratio)
-            h = math.sqrt(target_area / aspect_ratio)
-
-            if w < width and h < height:
-                x1 = np.random.uniform(0, width-w)
-                y1 = np.random.uniform(0, height-h)
-                x2, y2 = x1 + w, y1 + h
-                bboxs_ls[bid, :4] = np.array([x1,y1,x2,y2])
-                break
-    return bboxs_ls
-
 def get_bboxs_in_grid(scale=(0.12, 0.3), ratio=(0.5, 2), grid_num=3):
+    '''
+    This function is used to generate bboxs in each grid
+    scale: scale of bbox area
+    ratio: aspect ratio of bbox
+    grid_num: number of grid in each row and column
+    '''
     bboxs_ls = np.zeros([grid_num**2, 4])
     iw, ih = 1, 1
     N_grid = grid_num ** 2
@@ -169,66 +147,22 @@ def get_bboxs_in_grid(scale=(0.12, 0.3), ratio=(0.5, 2), grid_num=3):
         w = math.sqrt(target_area * aspect_ratio)
         h = math.sqrt(target_area / aspect_ratio)
 
-        xc = random.uniform(gx1, gx2)#random.uniform(max(params[1]+iw/(2*grid_num), gx1), min(params[1] + params[3] - iw/(2*grid_num), gx2))
-        yc = random.uniform(gy1, gy2)#random.uniform(max(params[0]+ih/(2*grid_num), gy1), min(params[0] + params[2] - ih/(2*grid_num), gy2))
+        xc = random.uniform(gx1, gx2)
+        yc = random.uniform(gy1, gy2)
 
         x1, y1 = max(0, xc - w / 2), max(0, yc - h / 2)
         x2, y2 = min(1, xc + w / 2), min(1, yc + h / 2)
         bboxs_ls[gid] = np.array([x1,y1,x2,y2])
     return bboxs_ls
 
-
-def PRC_old(msk, resized_bboxs, view_size, cutout_ratio=0.3):
-    """ img is tensor
-        resized_bboxs is in (0, 1), need to rescale to pixel wise size with view_size
-    """
-    b_size = (resized_bboxs[:, 2] - resized_bboxs[:, 0]) * (resized_bboxs[:, 3] - resized_bboxs[:, 1])
-    _, b_ls = b_size.sort(descending=True)
-    for bid in b_ls:
-        bbox = resized_bboxs[bid]
-
-        x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
-        x1 = round(float(x1) * view_size[0])
-        x2 = min(round(float(x2) * view_size[1]),13)
-        y1 = round(float(y1) * view_size[0])
-        y2 = min(round(float(y2) * view_size[1]),13)
-
-        area = (y2 - y1 + 1) * (x2 - x1 + 1)
-        cur_area = msk[y1:y2 + 1, x1:x2 + 1].sum()
-        cutratio = (1 - cur_area / area)
-
-        if (cutratio<=1.2*cutout_ratio) and (cutratio>0.8*cutout_ratio):
-            continue#(1 - cur_area / area) >= cutout_ratio:
-        elif cutratio>=.5*cutout_ratio:
-            msk[int(y1):int(y2) + 1, int(x1):int(x2) + 1] = 1
-
-        # bbox_w = x2 - x1 + 1
-        # bbox_h = y2 - y1 + 1
-        # bbox_area = bbox_w * bbox_h
-
-        target_area = cutout_ratio * area
-
-        ratio = (x2 - x1 + 1) / (y2 - y1 + 1)
-
-        w = math.sqrt(target_area * ratio)
-        h = math.sqrt(target_area / ratio)
-
-        if w == 0 or h == 0:
-            continue
-
-        center_cut_x = random.uniform(x1, x2)
-        center_cut_y = random.uniform(y1, y2)
-
-        cut_x1 = max(round(center_cut_x - w/2), 0)
-        cut_x2 = min(round(center_cut_x + w/2), view_size[0])
-        cut_y1 = max(round(center_cut_y - h/2), 0)
-        cut_y2 = min(round(center_cut_y + h/2), view_size[1])
-
-        # img is tensor 3, H, W
-        msk[cut_y1:cut_y2, cut_x1:cut_x2] = 0
-    return msk
-
-def PRC(msk, resized_bboxs, view_size, cutout_ratio=0.3):
+def RCC(msk, resized_bboxs, view_size, cutout_ratio=0.3):
+    '''
+    This function is used to generate RCC mask
+    msk: mask to be processed
+    resized_bboxs: bboxs in the image
+    view_size: size of the image
+    cutout_ratio: ratio of cutout
+    '''
     b_size = (resized_bboxs[:, 2] - resized_bboxs[:, 0]) * (resized_bboxs[:, 3] - resized_bboxs[:, 1])
     _, b_ls = b_size.sort(descending=True)
     for bid in b_ls:

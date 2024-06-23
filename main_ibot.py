@@ -29,7 +29,7 @@ from models.head import iBOTHead
 from loader import ImageFolderMask
 from evaluation.unsupervised.unsup_cls import eval_pred
 
-from kornia_transform import aug1, aug2
+from kornia_transform import aug1, aug2 # perform data augmentation on GPUs
 from torch.nn.functional import unfold
 
 def get_args_parser():
@@ -128,8 +128,6 @@ def get_args_parser():
     parser.add_argument('--drop_path', type=float, default=0.1, help="""Drop path rate for student network.""")
 
     # Multi-crop parameters
-    parser.add_argument('--global_crops_number', type=int, default=2, help="""Number of global
-        views to generate. Default is to use two global crops. """)
     parser.add_argument('--global_crops_scale', type=float, nargs='+', default=(0.14, 1.),
         help="""Scale range of the cropped image before resizing, relatively to the origin image.
         Used for large global view cropping. When disabling multi-crop (--local_crops_number 0), we
@@ -140,8 +138,10 @@ def get_args_parser():
     parser.add_argument('--local_crops_scale', type=float, nargs='+', default=(0.05, 0.4),
         help="""Scale range of the cropped image before resizing, relatively to the origin image.
         Used for small local view cropping of multi-crop.""")
-
+    # De-coupling setting
     parser.add_argument('--dc', action='store_true')
+    parser.add_argument('--dc_ratio', default=.3, type=float, help='Weight of de-coupling loss')
+    parser.add_argument('--dc_sample_ratio', default=.25, type=float, help='Proportion of samples for de-coupling')
 
     # Misc
     parser.add_argument('--data_path', default='/path/to/imagenet/train/', type=str,
@@ -166,7 +166,7 @@ def train_ibot(args):
     transform = DataAugmentationiBOT(
         args.global_crops_scale,
         args.local_crops_scale,
-        args.global_crops_number,
+        2,
         args.local_crops_number,
     )
     pred_size = args.patch_size * 8 if 'swin' in args.arch else args.patch_size
@@ -276,7 +276,7 @@ def train_ibot(args):
     ibot_loss = iBOTLoss(
         args.out_dim,
         args.out_dim if same_dim else args.patch_out_dim,
-        args.global_crops_number,
+        2,
         args.local_crops_number,
         args.warmup_teacher_temp,
         args.teacher_temp,
@@ -410,91 +410,47 @@ def train_one_epoch(student, teacher, teacher_without_ddp, ibot_loss, data_loade
         images = [im.cuda(non_blocking=True) for im in images]
         masks = [msk.cuda(non_blocking=True).long() for msk in masks]
 
-        ######## decoupling ###########
+        # obtain de-coupling masks
         if args.dc:
             masks_exist = torch.cat([masks[0][masks[0].sum(dim=(1,2))>0],masks[1][masks[1].sum(dim=(1,2))>0]],dim=0)
-            mind = torch.multinomial(torch.ones(masks_exist.shape[0]).cuda(),2*int(N*.3))
-            masks_dc = masks_exist[mind]
-            # ind1 = torch.randperm(N).cuda()
-            # ind2 = torch.randperm(N).cuda()
-            nI = mind.shape[0]//4
-            # masks[0][ind1[:nI]] = 2 * masks_dc[:nI]
-            # masks[0][ind1[nI:2*nI]] = 2 * (1 - masks_dc)[nI:2*nI]
-            # masks[1][ind2[:nI]] = 2 * masks_dc[2*nI:3*nI]
-            # masks[1][ind2[nI:2*nI]] = 2 * (1 - masks_dc)[3*nI:4*nI]
-            masks[0] = torch.cat([masks[0], 2 * masks_dc[:nI]])
-            masks[0] = torch.cat([masks[0], 2 * (1 - masks_dc)[nI:2*nI]])
-            masks[1] = torch.cat([masks[1], 2 * masks_dc[2*nI:3*nI]])
-            masks[1] = torch.cat([masks[1], 2 * (1 - masks_dc)[3*nI:4*nI]])
+            masks_dc = masks_exist[:2*int(N*args.dc_sample_ratio)]
+            n = masks_dc.shape[0]//4
 
-            mid_0 = ((masks[0] == 2).sum(dim=(1, 2)) > 0)
-            mid_1 = ((masks[1] == 2).sum(dim=(1, 2)) > 0)
-            images[0] = torch.cat([images[0], images[0][-2 * nI:]])
-            images[1] = torch.cat([images[1], images[1][-2 * nI:]])
+            # mark the patches for background mixture with 2
+            masks[0] = torch.cat([masks[0], 2 * masks_dc[:n]])
+            masks[0] = torch.cat([masks[0], 2 * (1 - masks_dc)[n:2*n]])
+            masks[1] = torch.cat([masks[1], 2 * masks_dc[2*n:3*n]])
+            masks[1] = torch.cat([masks[1], 2 * (1 - masks_dc)[3*n:4*n]])
+
+            images[0] = torch.cat([images[0], images[0][-2 * n:]])
+            images[1] = torch.cat([images[1], images[1][-2 * n:]])
         else:
-            nI = 0
+            n = 0
 
         images_origin = images.copy()
         images[0] = ag1(images[0])
-        for i_id in range(args.global_crops_number - 1):
-            images[i_id+1] = ag2(images[i_id+1])
+        images[1] = ag2(images[1])
         for i_id in range(args.local_crops_number):
-            images[i_id+args.global_crops_number] = ag1(images[i_id+args.global_crops_number])
+            images[i_id+2] = ag1(images[i_id+2])
 
         if args.dc:
             images_new = images.copy()
-            images_new[0][mid_0] = ag1(images_origin[0][mid_0])
-            images_new[1][mid_1] = ag2(images_origin[1][mid_1])
+            images_new[0][-2 * n:] = ag1(images_origin[0][-2 * n:])
+            images_new[1][-2 * n:] = ag2(images_origin[1][-2 * n:])
 
         with torch.cuda.amp.autocast(fp16_scaler is not None):
             # get global views
-            feat_t, teacher_output = teacher(images[:args.global_crops_number], return_backbone_feat=True, ist=True)
+            feat_t, teacher_output = teacher(images[:2], return_backbone_feat=True)
             if args.dc:
-                feat_s, student_output = student(images_new[:args.global_crops_number], mask=masks[:args.global_crops_number], return_backbone_feat=True, ist=False)
+                feat_s, student_output = student(images_new[:2], mask=masks[:2], return_backbone_feat=True)
             else:
-                feat_s, student_output = student(images[:args.global_crops_number], mask=masks[:args.global_crops_number], return_backbone_feat=True, ist=False)
-
-            # with torch.no_grad():
-            #     ft1 = F.normalize(feat_t[:N, 1:], dim=2)
-            #     ft2 = F.normalize(feat_t[N:, 1:], dim=2)
-            #     ind12 = (ft1@ft2.transpose(1,2)).topk(k=1, dim=2)[1]
-            #     ind21 = (ft2@ft1.transpose(1,2)).topk(k=1, dim=2)[1]
-
-            # if epoch >= 50:
-            #     Cf = student_output[0].shape[-1]
-            #     # thres = (1-(1-(ft1@ft2.flip(0).transpose(1,2)).mean())*.2)
-            #     # fs1 = F.normalize(feat_s[:N, 1:], dim=2).detach()
-            #     # fs2 = F.normalize(feat_s[N:, 1:], dim=2).detach()
-            #     # fs1_neigh = unfold(fs1.reshape([N,14,14,-1]).permute(0,3,1,2), kernel_size=5, stride=1, padding=2).reshape([N,-1,25,196])
-            #     # fs2_neigh = unfold(fs2.reshape([N, 14, 14, -1]).permute(0, 3, 1, 2), kernel_size=5, stride=1,
-            #     #                    padding=2).reshape([N,-1,25,196])
-            #     # val_mask1 = (torch.einsum('bnc,bckn->bnk', [fs1, fs1_neigh]) >= thres).float()
-            #     # val_mask2 = (torch.einsum('bnc,bckn->bnk', [fs2, fs2_neigh]) >= thres).float()
-            #     # tind1s = torch.multinomial(val_mask1.reshape([-1, 25]), 1).reshape([N, 196, 1])
-            #     # tind2s = torch.multinomial(val_mask2.reshape([-1, 25]), 1).reshape([N, 196, 1])
-            #     #
-            #     # tindb = torch.arange(196).reshape([1,196,1]).cuda().expand([N,-1,-1])
-            #     # tind1 = (tindb + (tind1s // 5 - 2) * 14 + (tind1s % 5 - 2)).expand([-1, -1, Cf])
-            #     # tind2 = (tindb + (tind2s // 5 - 2) * 14 + (tind2s % 5 - 2)).expand([-1, -1, Cf])
-            #
-            #
-            #     dis_1 = F.normalize(student_output[1][:N], dim=2)
-            #     dis_2 = F.normalize(student_output[1][N:], dim=2)
-            #
-            #     loss_p_intra1 = loss_uniform(dis_1, dis_1.detach(), mask=masks[0])
-            #     loss_p_intra2 = loss_uniform(dis_2, dis_2.detach(), mask=masks[1])
+                feat_s, student_output = student(images[:2], mask=masks[:2], return_backbone_feat=True)
 
             # get local views
             student.module.backbone.masked_im_modeling = False
-            student_local_cls = student(images[args.global_crops_number:])[0] if len(images) > args.global_crops_number else None
+            student_local_cls = student(images[2:])[0] if len(images) > 2 else None
             student.module.backbone.masked_im_modeling = args.use_masked_im_modeling
-            # if epoch >= 80:
-            #     all_loss = ibot_loss(student_output, teacher_output, student_local_cls, masks, epoch, ind12, ind21)
-            # else:
-            #     all_loss = ibot_loss(student_output, teacher_output, student_local_cls, masks, epoch)
-            all_loss = ibot_loss(student_output, teacher_output, student_local_cls, masks, epoch)
-            # if epoch >= 50:
-            #     all_loss['loss'] += .1*(loss_p_intra1+loss_p_intra2)/2
+            all_loss = ibot_loss(student_output, teacher_output, student_local_cls, masks, epoch, args)
             loss = all_loss.pop('loss')
 
         if not math.isfinite(loss.item()):
@@ -503,12 +459,11 @@ def train_one_epoch(student, teacher, teacher_without_ddp, ibot_loss, data_loade
 
         # log statistics
         if not args.dc:
-            probs1 = teacher_output[0].chunk(args.global_crops_number)
-            probs2 = student_output[0].chunk(args.global_crops_number)
+            probs1 = teacher_output[0].chunk(2)
+            probs2 = student_output[0].chunk(2)
         else:
-            probs1 = torch.cat([teacher_output[0][:N], teacher_output[0][N+2*nI:-2*nI]]).chunk(args.global_crops_number)
-            probs2 = torch.cat([student_output[0][:N], student_output[0][N + 2 * nI:-2 * nI]]).chunk(
-                args.global_crops_number)
+            probs1 = torch.cat([teacher_output[0][:N], teacher_output[0][N + 2 * n:-2 * n]]).chunk(2)
+            probs2 = torch.cat([student_output[0][:N], student_output[0][N + 2 * n:-2 * n]]).chunk(2)
         pred1 = utils.concat_all_gather(probs1[0].max(dim=1)[1])
         pred2 = utils.concat_all_gather(probs2[1].max(dim=1)[1])
         acc = (pred1 == pred2).sum() / pred1.size(0)
@@ -599,38 +554,7 @@ class iBOTLoss(nn.Module):
             np.ones(nepochs - warmup_teacher_temp_epochs - mim_start_epoch) * teacher_temp2
         ))
 
-    @torch.no_grad()
-    def sinkhorn_knopp_teacher(self, teacher_output, teacher_temp, n_iterations=3):
-        #teacher_output = teacher_output.float()
-        # world_size = dist.get_world_size() if dist.is_initialized() else 1
-        Q = torch.exp(teacher_output / teacher_temp).t()  # Q is K-by-B for consistency with notations from our paper
-        # B = Q.shape[1] * world_size # number of samples to assign
-        B = torch.tensor(teacher_output.shape[0]).cuda()
-        dist.all_reduce(B)
-        K = Q.shape[0]  # how many prototypes
-
-        # make the matrix sums to 1
-        sum_Q = torch.sum(Q)
-        if dist.is_initialized():
-            dist.all_reduce(sum_Q)
-        Q /= sum_Q
-
-        for it in range(n_iterations):
-            # normalize each row: total weight per prototype must be 1/K
-            sum_of_rows = torch.sum(Q, dim=1, keepdim=True)
-            if dist.is_initialized():
-                dist.all_reduce(sum_of_rows)
-            Q /= sum_of_rows
-            Q /= K
-
-            # normalize each column: total weight per sample must be 1/B
-            Q /= torch.sum(Q, dim=0, keepdim=True)
-            Q /= B
-
-        Q *= B  # the columns must sum to 1 so that Q is an assignment
-        return Q.t()
-
-    def forward(self, student_output, teacher_output, student_local_cls, student_mask, epoch, in12=None, in21=None):
+    def forward(self, student_output, teacher_output, student_local_cls, student_mask, epoch, args):
         """
         Cross-entropy between softmax outputs of the teacher and student networks.
         """
@@ -664,58 +588,43 @@ class iBOTLoss(nn.Module):
         teacher_cls_c = teacher_cls_c.detach().chunk(self.ngcrops)
         teacher_patch_c = F.softmax((teacher_patch - self.center2) / temp2, dim=-1)
         teacher_patch_c = teacher_patch_c.detach().chunk(self.ngcrops)
-        if in12 is not None:
-            with torch.no_grad():
-                C = teacher_patch_c[0].shape[2]
-                t2 = teacher_patch_c[1].gather(1, in12.expand([-1, -1, C]))
-                t1 = teacher_patch_c[0].gather(1, in21.expand([-1, -1, C]))
-                zt = [t1, t2]
 
         total_loss1, n_loss_terms1 = 0, 0
         total_loss2, n_loss_terms2 = 0, 0
+        if dc_flag:
+            total_loss2_dc, n_loss_terms2_dc = 0, 0
         for q in range(len(teacher_cls_c)):
             for v in range(len(student_cls_c)):
                 if v == q:
                     loss2 = torch.sum(-teacher_patch_c[q] * F.log_softmax(student_patch_c[v], dim=-1), dim=-1)
                     mask = student_mask[v].flatten(-2, -1)
-                    loss2 = torch.sum(loss2 * mask.float(), dim=-1) / mask.sum(dim=-1).clamp(min=1.0)
+                    loss2 *= mask.float()
+                    if dc_flag:
+                        loss2_dc = torch.sum(loss2[dc_ls[v]], dim=-1) / mask[dc_ls[v]].sum(dim=-1).clamp(min=1.0)
+                        loss2 = torch.sum(loss2[~dc_ls[v]], dim=-1) / mask[~dc_ls[v]].sum(dim=-1).clamp(min=1.0)
+                        total_loss2_dc += loss2_dc.mean()
+                        n_loss_terms2_dc += 1
+                    else:
+                        loss2 = torch.sum(loss2, dim=-1) / mask.sum(dim=-1).clamp(min=1.0)
                     total_loss2 += loss2.mean()
-                    # loss2_dc = torch.sum(-teacher_patch_c[q].flip(0)[dc_ls[v]] * F.log_softmax(student_patch_c[v][dc_ls[v]], dim=-1), dim=-1)
-                    # mask_dc = (~student_mask[v][dc_ls[v]]).flatten(-2, -1)
-                    # loss2_dc = (torch.sum(loss2_dc * mask_dc.float(), dim=-1) / mask_dc.sum(dim=-1).clamp(min=1.0))*(mask_dc.shape[0]/B)
-                    # total_loss2 += loss2_dc.mean()
-                    n_loss_terms2 += 1#+mask_dc.shape[0]/B
+                    n_loss_terms2 += 1
                 else:
                     loss1 = torch.sum(-teacher_cls_c[q] * F.log_softmax(student_cls_c[v], dim=-1), dim=-1)
                     if dc_flag:
+                        # images with background mixture don't participate in image-level loss calulating
                         loss1 = torch.sum(loss1 * (~dc_ls[v]), dim=-1) / (~dc_ls[v]).sum(dim=-1).clamp(min=1.0)
-                        if in12 is not None:
-                            loss1p = torch.sum(-zt[q][dc_ls[v]] * F.log_softmax(student_patch_c[v][dc_ls[v]], dim=-1), dim=-1)
-                            mask = student_mask[v][dc_ls[v]].flatten(-2, -1)
-                            loss1p = torch.sum(loss1p * mask.float(), dim=-1) / mask.sum(dim=-1).clamp(min=1.0)
-                            # loss1p = torch.sum(loss1p * (dc_ls[v]), dim=-1) / (dc_ls[v]).sum(dim=-1).clamp(min=1.0)
-                            total_loss2 += 0.8*dc_ls[v].sum()*(loss1p.shape[0])/B
-                            n_loss_terms2 += 0.8*(loss1p.shape[0])/B
                     else:
                         loss1 = loss1
                     total_loss1 += loss1.mean()
                     n_loss_terms1 += 1
 
-        # lossp21 = torch.sum(-teacher_patch_c[0] * F.log_softmax(s1, dim=-1), dim=-1)
-        # have_mask2 = (student_mask[1].sum(dim=(1, 2)))<=0
-        # lossp21 = (lossp21.mean(-1)*have_mask2).sum() / have_mask2.sum().clamp(min=1.0)
-        # total_loss2 += lossp21.mean()
-        # n_loss_terms2 += 1
-        # lossp12 = torch.sum(-teacher_patch_c[1] * F.log_softmax(s2, dim=-1), dim=-1)
-        # have_mask1 = (student_mask[0].sum(dim=(1, 2))) <= 0
-        # lossp12 = (lossp12.mean(-1)*have_mask1).sum() / have_mask1.sum().clamp(min=1.0)
-        # total_loss2 += lossp12.mean()
-        # n_loss_terms2 += 1
-
-
         total_loss1 = (total_loss1 / n_loss_terms1 * self.lambda1)
         total_loss2 = total_loss2 / n_loss_terms2 * self.lambda2
-        total_loss = dict(cls=total_loss1, patch=total_loss2, loss=total_loss1 + total_loss2)
+        if dc_flag:
+            total_loss2_dc = total_loss2_dc / n_loss_terms2_dc * self.lambda2
+            total_loss = dict(cls=total_loss1, patch=total_loss2, loss=total_loss1 + total_loss2 + args.dc_ratio * total_loss2_dc)
+        else:
+            total_loss = dict(cls=total_loss1, patch=total_loss2, loss=total_loss1 + total_loss2)
         self.update_center(teacher_cls, teacher_patch)
         return total_loss
 
@@ -782,30 +691,6 @@ class DataAugmentationiBOT(object):
         for _ in range(self.local_crops_number):
             crops.append(self.local_transfo(image))
         return crops
-
-def affinity_distilation_point(vectors_qs, vectors_qt, vectors_ks, vectors_kt, tps, tpt, mask):
-    vectors_ks = torch.transpose(vectors_ks, 1, 2)
-    vectors_kt = torch.transpose(vectors_kt, 1, 2)
-    muls = torch.bmm(vectors_qs, vectors_ks) # B N N
-    #mulsd, sind = muls.topk(dim=2, k=30, largest=False)
-
-    mult = torch.bmm(vectors_qt, vectors_kt)
-    #multd = mult.gather(2, sind)
-
-    vectors_t_mul = torch.nn.functional.softmax(mult / tpt, dim=2)  # N*D*256
-    # vectors_t_mul_trans = torch.bmm(point_corres, vectors_k_mul)
-    vectors_s_mul = torch.log(
-        torch.nn.functional.softmax(muls / tps, dim=2))  # N*D*256
-    cross_entropy = (-vectors_t_mul * vectors_s_mul).sum(-1)
-    dis_mask = mask.sum(dim=(1,2)) <= 0
-    loss = (cross_entropy.mean(-1) * dis_mask).sum() / dis_mask.sum().clamp(min=1.0)
-    return loss
-
-def loss_uniform(vectors_q, vectors_k, mask):
-    lu = torch.log(torch.exp((vectors_q@vectors_k.detach().transpose(1,2))/.2).sum(-1))
-    dis_mask = mask.sum(dim=(1,2)) <= 0
-    loss = (lu.mean(-1) * dis_mask).sum() / dis_mask.sum().clamp(min=1.0)
-    return loss
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('iBOT', parents=[get_args_parser()])

@@ -90,7 +90,7 @@ The evaluation protocol is consistent with [iBOT](https://github.com/bytedance/i
 You can refer to [Evaluating iBOT on Downstream Tasks](https://github.com/bytedance/ibot/blob/main/evaluation/README.md) for details. Or you can directly run the [script](configs/Evaluation.sh) to perform dense-level evaluation on MS-COCO and ADE20K.
 
 ## License
-This repository is released under the MIT license as found in the [LICENSE](LICENSE) file.
+This repository is released under the Apache 2.0 license as found in the [LICENSE](LICENSE) file.
 
 ## Citation
 If you find this repository useful, please consider giving a star :star: and citation:

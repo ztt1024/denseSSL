@@ -27,7 +27,7 @@ fi
 # pre-training
 if [[ $TYPE =~ pretrain ]]; then
     echo "==> Starting pretrainin iBOT."
-    python3 -m torch.distributed.launch --nnodes ${TOTAL_NODES:-1} \
+    /home/QiuCongpei/anaconda3/envs/iBOT/bin/python3 -m torch.distributed.launch --nnodes ${TOTAL_NODES:-1} \
         --node_rank ${NODE_ID:-0} --nproc_per_node=$GPUS_PER_NODE \
         --master_addr=${MASTER_ADDR:-127.0.0.1} \
         --master_port=${MASTER_PORT:-29500} \
@@ -344,9 +344,9 @@ if [[ $TYPE =~ imagenet_knn ]] || [[ $TYPE =~ imagenet_reg ]] || \
             echo "Starting evaluating ${KEY_LIST[$K]}."
             if [ -z $WEIGHT_FILE ]; then
                 WEIGHT_FILE=$OUTPUT_DIR/checkpoint_${KEY_LIST[$K]}.pth
-                python3 extract_backbone_weights.py $PRETRAINED $WEIGHT_FILE --checkpoint_key ${KEY_LIST[$K]}
+                /home/QiuCongpei/anaconda3/envs/iBOT/bin/python3 extract_backbone_weights.py $PRETRAINED $WEIGHT_FILE --checkpoint_key ${KEY_LIST[$K]}
             fi
-            python3 -m torch.distributed.launch --nproc_per_node=$GPUS_PER_NODE \
+            /home/QiuCongpei/anaconda3/envs/iBOT/bin/python3 -m torch.distributed.launch --nproc_per_node=$GPUS_PER_NODE \
                 --master_port=$[${MASTER_PORT:-29500}-$K] \
                 $CURDIR/evaluation/semantic_segmentation/train.py \
                 $CURDIR/evaluation/semantic_segmentation/configs/linear/${ARCH}_512_ade20k_160k.py \
@@ -356,7 +356,7 @@ if [[ $TYPE =~ imagenet_knn ]] || [[ $TYPE =~ imagenet_reg ]] || \
                 --options model.backbone.use_checkpoint=True \
                 model.pretrained=$WEIGHT_FILE \
                 ${@:6}
-            python3 -m torch.distributed.launch --nproc_per_node=$GPUS_PER_NODE \
+            /home/QiuCongpei/anaconda3/envs/iBOT/bin/python3 -m torch.distributed.launch --nproc_per_node=$GPUS_PER_NODE \
                 --master_port=$[${MASTER_PORT:-29500}-$K] \
                 $CURDIR/evaluation/semantic_segmentation/test.py \
                 $CURDIR/evaluation/semantic_segmentation/configs/linear/${ARCH}_512_ade20k_160k.py \
@@ -374,9 +374,9 @@ if [[ $TYPE =~ imagenet_knn ]] || [[ $TYPE =~ imagenet_reg ]] || \
             echo "Starting evaluating ${KEY_LIST[$K]}."
             if [ -z $WEIGHT_FILE ]; then
                 WEIGHT_FILE=$OUTPUT_DIR/checkpoint_${KEY_LIST[$K]}.pth
-                python3 extract_backbone_weights.py $PRETRAINED $WEIGHT_FILE --checkpoint_key ${KEY_LIST[$K]}
+                /home/QiuCongpei/anaconda3/envs/iBOT/bin/python3 extract_backbone_weights.py $PRETRAINED $WEIGHT_FILE --checkpoint_key ${KEY_LIST[$K]}
             fi
-            python3 -m torch.distributed.launch --nproc_per_node=$GPUS_PER_NODE \
+            /home/QiuCongpei/anaconda3/envs/iBOT/bin/python3 -m torch.distributed.launch --nproc_per_node=$GPUS_PER_NODE \
                 --master_port=$[${MASTER_PORT:-29500}-$K] \
                 $CURDIR/evaluation/semantic_segmentation/train.py \
                 $CURDIR/evaluation/semantic_segmentation/configs/upernet/${ARCH}_512_ade20k_160k.py \
@@ -386,7 +386,7 @@ if [[ $TYPE =~ imagenet_knn ]] || [[ $TYPE =~ imagenet_reg ]] || \
                 --options model.backbone.use_checkpoint=True \
                 model.pretrained=$WEIGHT_FILE \
                 ${@:6}
-            python3 -m torch.distributed.launch --nproc_per_node=$GPUS_PER_NODE \
+            /home/QiuCongpei/anaconda3/envs/iBOT/bin/python3 -m torch.distributed.launch --nproc_per_node=$GPUS_PER_NODE \
                 --master_port=$[${MASTER_PORT:-29500}-$K] \
                 $CURDIR/evaluation/semantic_segmentation/test.py \
                 $CURDIR/evaluation/semantic_segmentation/configs/upernet/${ARCH}_512_ade20k_160k.py \
@@ -404,9 +404,9 @@ if [[ $TYPE =~ imagenet_knn ]] || [[ $TYPE =~ imagenet_reg ]] || \
             echo "Starting evaluating ${KEY_LIST[$K]}."
             if [ -z $WEIGHT_FILE ]; then
                 WEIGHT_FILE=$OUTPUT_DIR/checkpoint_${KEY_LIST[$K]}.pth
-                python3 extract_backbone_weights.py $PRETRAINED $WEIGHT_FILE --checkpoint_key ${KEY_LIST[$K]}
+                /home/QiuCongpei/anaconda3/envs/iBOT/bin/python3 extract_backbone_weights.py $PRETRAINED $WEIGHT_FILE --checkpoint_key ${KEY_LIST[$K]}
             fi
-            python3 -m torch.distributed.launch --nproc_per_node=$GPUS_PER_NODE \
+            /home/QiuCongpei/anaconda3/envs/iBOT/bin/python3 -m torch.distributed.launch --nproc_per_node=$GPUS_PER_NODE \
                 --master_port=$[${MASTER_PORT:-29500}-$K] \
                 $CURDIR/evaluation/object_detection/train.py \
                 $CURDIR/evaluation/object_detection/configs/cascade_rcnn/${ARCH}_giou_4conv1f_coco_3x.py \
@@ -416,7 +416,7 @@ if [[ $TYPE =~ imagenet_knn ]] || [[ $TYPE =~ imagenet_reg ]] || \
                 --cfg-options model.backbone.use_checkpoint=True \
                 model.pretrained=$WEIGHT_FILE \
                 ${@:6}
-            python3 -m torch.distributed.launch --nproc_per_node=$GPUS_PER_NODE \
+            /home/QiuCongpei/anaconda3/envs/iBOT/bin/python3 -m torch.distributed.launch --nproc_per_node=$GPUS_PER_NODE \
                 --master_port=$[${MASTER_PORT:-29500}-$K] \
                 $CURDIR/evaluation/object_detection/test.py \
                 $CURDIR/evaluation/object_detection/configs/cascade_rcnn/${ARCH}_giou_4conv1f_coco_3x.py \

@@ -1,9 +1,3 @@
-# Copyright (c) ByteDance, Inc. and its affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
 Mostly copy-paste from DINO library and authors' responce in a github issue:
 https://github.com/facebookresearch/dino

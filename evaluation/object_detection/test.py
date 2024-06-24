@@ -1,9 +1,3 @@
-# Copyright (c) ByteDance, Inc. and its affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
 Mostly copy-paste from mmdetection library:
 https://github.com/open-mmlab/mmdetection/blob/master/tools/test.py

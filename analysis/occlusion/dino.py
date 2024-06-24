@@ -1,9 +1,3 @@
-# Copyright (c) ByteDance, Inc. and its affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
 """
 Mostly copy-paste from timm library:
 https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py

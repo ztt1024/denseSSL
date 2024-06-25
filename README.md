@@ -1,6 +1,6 @@
 # Mind Your Augmentation: The Key to De-coupling Dense Self-supervised Learning
 
-Released code and  pre-trained models for **ICLR 2024** paper **Mind Your Augmentation: The Key to De-coupling Dense Self-supervised Learning**. 
+Code and  pre-trained models of **ICLR 2024** paper **Mind Your Augmentation: The Key to De-coupling Dense Self-supervised Learning**. 
 
 [[`paper`](https://openreview.net/forum?id=WQYHbr36Fo)] [[`project page`](https://congpeiqiu.github.io/Mind/)]
 
